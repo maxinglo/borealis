@@ -543,12 +543,10 @@ void WinRTInputManager::updateMouseStates(RawMouseState* state)
     winrt::Windows::Foundation::Point p           = coreWindow.PointerPosition();
     winrt::Windows::Foundation::Rect windowBounds = coreWindow.Bounds();
 
-    double scaleFactor = brls::Application::getPlatform()->getVideoContext()->getScaleFactor();
-    int x              = p.X - windowBounds.X;
-    int y              = p.Y - windowBounds.Y;
-
-    state->position.x = x * scaleFactor / Application::windowScale;
-    state->position.y = y * scaleFactor / Application::windowScale;
+    if (windowBounds.Width > 0 && windowBounds.Height > 0) {
+        state->position.x = (p.X - windowBounds.X) * Application::contentWidth / windowBounds.Width;
+        state->position.y = (p.Y - windowBounds.Y) * Application::contentHeight / windowBounds.Height;
+    }
 
     state->offset = pointerOffset;
     state->scroll = scrollOffset;

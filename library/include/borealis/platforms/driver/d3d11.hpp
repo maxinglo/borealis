@@ -18,6 +18,9 @@
 #include <nanovg.h>
 #include <d3d11.h>
 #include <d3d11_1.h>
+#ifdef BOREALIS_USE_WINRT_COMPOSITION
+#include <winrt/Windows.UI.Composition.h>
+#endif
 
 #ifdef __GLFW__
 #define GLFW_INCLUDE_NONE
@@ -55,6 +58,15 @@ class D3D11Context
 
     ID3D11DeviceContext* getDeviceContext() { return this->deviceContext; }
 
+#ifdef BOREALIS_USE_WINRT_COMPOSITION
+    winrt::Windows::UI::Composition::Compositor getCompositor() { return compositor; }
+    winrt::Windows::UI::Composition::ContainerVisual getCompositionRoot() { return compositionRoot; }
+    auto getCompositionSize() { return uiVisual.Size(); }
+    double getPresentationRefreshRate() const { return presentationRefreshRate; }
+    bool isTransparentPresentation() const { return transparentPresentation; }
+    bool setTransparentPresentation(bool enabled);
+#endif
+
   private:
     ID3D11Device* device                     = nullptr;
     ID3D11DeviceContext* deviceContext       = nullptr;
@@ -62,13 +74,27 @@ class D3D11Context
     ID3D11RenderTargetView* renderTargetView = nullptr;
     ID3D11DepthStencilView* depthStencilView = nullptr;
     int interval                             = 1;
-    bool allowTearing                        = false;
 
     UINT(WINAPI* GetDpiForWindow)(HWND);
 
     HWND hWnd = nullptr;
 
-    bool initDX(HWND window, IUnknown* coreWindow, int width, int height, bool enableTearing = false);
+#ifdef BOREALIS_USE_WINRT_COMPOSITION
+    winrt::Windows::UI::Composition::Compositor compositor{nullptr};
+    winrt::Windows::UI::Composition::CompositionTarget compositionTarget{nullptr};
+    winrt::Windows::UI::Composition::ContainerVisual compositionRoot{nullptr};
+    winrt::Windows::UI::Composition::SpriteVisual uiVisual{nullptr};
+    UINT compositionSwapChainFlags = 0;
+    bool useTearingPresent = false;
+    double presentationRefreshRate = 0;
+    UINT previousSyncRefresh = 0;
+    LONGLONG previousSyncQpc = 0;
+    bool transparentPresentation = false;
+    HRESULT createPresentationSwapChain(IDXGIFactory2* factory, int width, int height, bool transparent);
+    void releaseSwapChain();
+#endif
+
+    bool initDX(HWND window, IUnknown* coreWindow, int width, int height);
     void unInitDX();
 };
 

@@ -64,12 +64,9 @@ void WinRTImeManager::onLayoutRequested(
     {
         auto windowBounds = coreWindow.Bounds();
 
-        float scale        = Application::windowScale;
-        double scaleFactor = brls::Application::getPlatform()->getVideoContext()->getScaleFactor();
-
         winrt::Windows::Foundation::Rect rectC {};
-        rectC.X = rect.X * Application::windowScale + windowBounds.X * scaleFactor;
-        rectC.Y = rect.Y * Application::windowScale + windowBounds.Y * scaleFactor;
+        rectC.X = rect.X * windowBounds.Width / Application::contentWidth + windowBounds.X;
+        rectC.Y = rect.Y * windowBounds.Height / Application::contentHeight + windowBounds.Y;
 
         args.Request().LayoutBounds().ControlBounds(rectC);
         args.Request().LayoutBounds().TextBounds(rectC);

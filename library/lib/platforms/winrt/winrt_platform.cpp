@@ -51,11 +51,32 @@ void WinRTPlatform::createWindow(std::string windowTitle, uint32_t windowWidth, 
 {
     brls::Logger::info("winrt createWindow: {}", windowTitle);
     coreWindow         = winrt::Windows::UI::Core::CoreWindow::GetForCurrentThread();
+    activationToken = coreWindow.Activated([this](const auto&, const winrt::Windows::UI::Core::WindowActivatedEventArgs& args) {
+        windowActive = args.WindowActivationState() != winrt::Windows::UI::Core::CoreWindowActivationState::Deactivated;
+        updateFocus();
+    });
+    visibilityToken = coreWindow.VisibilityChanged([this](const auto&, const winrt::Windows::UI::Core::VisibilityChangedEventArgs& args) {
+        windowVisible = args.Visible();
+        updateFocus();
+    });
+    navigation = winrt::Windows::UI::Core::SystemNavigationManager::GetForCurrentView();
+    backToken = navigation.BackRequested([](const auto&, const winrt::Windows::UI::Core::BackRequestedEventArgs& args) {
+        // The navigation controller already reports Cancel to Borealis.
+        args.Handled(true);
+    });
     displayRequest     = winrt::Windows::System::Display::DisplayRequest();
     this->videoContext = new WinRTVideoContext(coreWindow, windowTitle, windowWidth, windowHeight, windowXPos, windowYPos);
     this->inputManager = new WinRTInputManager(coreWindow);
     this->imeManager   = new WinRTImeManager(coreWindow);
     this->audioPlayer  = new WinRTAudioPlayer();
+}
+
+void WinRTPlatform::updateFocus()
+{
+    const bool active = windowActive && windowVisible;
+    if (focused == active) return;
+    focused = active;
+    Application::getWindowFocusChangedEvent()->fire(active);
 }
 
 void WinRTPlatform::restoreWindow()
@@ -91,7 +112,8 @@ void WinRTPlatform::disableScreenDimming(bool disable, const std::string& reason
 
     try
     {
-        displayRequest.RequestActive();
+        if (disable) displayRequest.RequestActive();
+        else displayRequest.RequestRelease();
         this->screenDimmingDisabled = disable;
     }
     catch (const std::exception& e)
@@ -172,6 +194,11 @@ ImeManager* WinRTPlatform::getImeManager()
 
 WinRTPlatform::~WinRTPlatform()
 {
+    if (coreWindow) {
+        coreWindow.Activated(activationToken);
+        coreWindow.VisibilityChanged(visibilityToken);
+    }
+    if (navigation) navigation.BackRequested(backToken);
     delete this->audioPlayer;
     delete this->inputManager;
     delete this->imeManager;

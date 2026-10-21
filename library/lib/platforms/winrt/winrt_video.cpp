@@ -18,6 +18,7 @@
 #include <borealis/core/logger.hpp>
 #include <borealis/core/thread.hpp>
 #include <borealis/platforms/winrt/winrt_video.hpp>
+#include <chrono>
 
 #define WIN32_LEAN_AND_MEAN
 #include <gamingdeviceinformation.h>
@@ -81,7 +82,7 @@ static void updateWindowSize(winrt::Windows::Foundation::Rect coreWindowSize)
     scaleFactor        = D3D11_CONTEXT->getScaleFactor();
     auto windowRawSize = getWindowRawSize(coreWindowSize, scaleFactor);
 
-    D3D11_CONTEXT->onFramebufferSize(windowRawSize.Width, windowRawSize.Height);
+    if (!D3D11_CONTEXT->onFramebufferSize(windowRawSize.Width, windowRawSize.Height)) return;
     Application::onWindowResized(windowRawSize.Width, windowRawSize.Height);
     if (!VideoContext::FULLSCREEN)
     {
@@ -121,10 +122,10 @@ WinRTVideoContext::WinRTVideoContext(winrt::Windows::UI::Core::CoreWindow coreWi
     }
 
     Logger::info("winrt: USE_D3D11");
-    // TODO
-    bool enalbeTearing = VideoContext::swapInterval == 0;
-    Logger::debug("winrt: USE_D3D11 enalbeTearing:{}", enalbeTearing);
-    D3D11_CONTEXT = std::make_unique<D3D11Context>(this->window, windowWidth, windowHeight, enalbeTearing);
+    scaleFactor = winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi() / 96.0;
+    auto windowRawSize = getWindowRawSize(coreWindow.Bounds(), scaleFactor);
+    D3D11_CONTEXT = std::make_unique<D3D11Context>(this->window, windowRawSize.Width, windowRawSize.Height,
+        VideoContext::swapInterval == 0);
     D3D11_CONTEXT->setSwapInterval(VideoContext::swapInterval);
 
     this->nvgContext = nvgCreateD3D11(D3D11_CONTEXT->getDevice(), NVG_ANTIALIAS | NVG_STENCIL_STROKES);
@@ -134,7 +135,7 @@ WinRTVideoContext::WinRTVideoContext(winrt::Windows::UI::Core::CoreWindow coreWi
     }
 
     scaleFactor        = D3D11_CONTEXT->getScaleFactor();
-    auto windowRawSize = getWindowRawSize(coreWindow.Bounds(), scaleFactor);
+    windowRawSize = getWindowRawSize(coreWindow.Bounds(), scaleFactor);
 
     Application::setWindowSize(windowRawSize.Width, windowRawSize.Height);
     D3D11_CONTEXT->onFramebufferSize(windowRawSize.Width, windowRawSize.Height);
@@ -150,6 +151,16 @@ WinRTVideoContext::WinRTVideoContext(winrt::Windows::UI::Core::CoreWindow coreWi
 
 void WinRTVideoContext::beginFrame()
 {
+    // Changing the HDMI media mode need not resize the virtual CoreWindow.
+    static auto nextDisplayCheck = std::chrono::steady_clock::time_point{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= nextDisplayCheck) {
+        nextDisplayCheck = now + std::chrono::seconds(1);
+        const auto bounds = winrt::Windows::UI::Core::CoreWindow::GetForCurrentThread().Bounds();
+        const auto pixels = getWindowRawSize(bounds, D3D11_CONTEXT->getScaleFactor());
+        if (pixels.Width != Application::windowWidth || pixels.Height != Application::windowHeight)
+            updateWindowSize(bounds);
+    }
     D3D11_CONTEXT->beginFrame();
 }
 

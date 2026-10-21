@@ -61,6 +61,10 @@
 #include <chrono>
 #include <set>
 #include <thread>
+#ifdef BOREALIS_USE_WINRT_COMPOSITION
+#include <Windows.h>
+#include <winrt/base.h>
+#endif
 
 #define BUTTOM_REPEAT_TRIGGER 250000 // 250ms
 #define BUTTON_REPEAT_DELAY   100000 // 100 ms
@@ -227,8 +231,36 @@ bool Application::internalMainLoop()
     {
         Time deltaTime = getCPUTimeUsec() - frameStartTime;
         Time interval  = Application::limitedFrameTime - deltaTime;
+#ifdef BOREALIS_USE_WINRT_COMPOSITION
+        // Keep fractional deadlines on the same clock instead of accumulating
+        // the timer's wake-up delay once per frame.
+        static double frameDeadline = 0, previousDuration = 0;
+        const auto now = getCPUTimeUsec();
+        if (previousDuration != limitedFrameTime || now > frameDeadline + limitedFrameTime * 4)
+            frameDeadline = frameStartTime + limitedFrameTime;
+        else
+            frameDeadline += limitedFrameTime;
+        previousDuration = limitedFrameTime;
+        interval = static_cast<Time>(frameDeadline - now);
+#endif
         if (interval > 0)
         {
+#ifdef BOREALIS_USE_WINRT_COMPOSITION
+            // Xbox's default sleep timer can round an 8 ms wait to a 15.6 ms
+            // tick. Use a per-thread high-resolution timer for the UI limiter.
+            static winrt::handle frameTimer{CreateWaitableTimerExW(nullptr, nullptr,
+                CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE)};
+            static const bool timerLogged = []() {
+                Logger::info("Xbox high-resolution frame timer: {}", static_cast<bool>(frameTimer));
+                return true;
+            }();
+            (void)timerLogged;
+            LARGE_INTEGER dueTime;
+            dueTime.QuadPart = -static_cast<LONGLONG>(interval) * 10;
+            if (frameTimer && SetWaitableTimerEx(frameTimer.get(), &dueTime, 0, nullptr, nullptr, nullptr, 0) &&
+                WaitForSingleObjectEx(frameTimer.get(), INFINITE, FALSE) == WAIT_OBJECT_0)
+                return true;
+#endif
             std::this_thread::sleep_for(std::chrono::microseconds(interval));
         }
     }
@@ -240,12 +272,12 @@ void Application::updateFPS()
 {
     static Time start = getCPUTimeUsec();
     static size_t index = 0;
-
+    const auto now = getCPUTimeUsec();
     index++;
     // update FPS every second
-    if (Application::frameStartTime - start > 1000000) {
-        Application::globalFPS = index;
-        start = Application::frameStartTime;
+    if (now - start >= 1000000) {
+        Application::globalFPS = std::max<size_t>(1, static_cast<size_t>(std::lround(index * 1000000.0 / (now - start))));
+        start = now;
         index = 0;
     }
 }
@@ -866,7 +898,12 @@ size_t Application::getFPS()
 
 void Application::setLimitedFPS(size_t fps)
 {
-    Application::limitedFrameTime = fps == 0 ? 0 : 1000000.0f / fps;
+    Application::setFrameRateLimit(static_cast<double>(fps));
+}
+
+void Application::setFrameRateLimit(double fps)
+{
+    Application::limitedFrameTime = std::isfinite(fps) && fps > 0 ? 1000000.0 / fps : 0;
 }
 
 void Application::setSwapInterval(int interval)

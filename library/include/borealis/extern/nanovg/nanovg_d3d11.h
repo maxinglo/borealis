@@ -159,6 +159,7 @@ enum D3DNVGcallType {
 
 struct D3DNVGcall {
 	int type;
+	int copy;
 	int image;
 	int pathOffset;
 	int pathCount;
@@ -221,6 +222,7 @@ struct D3DNVGcontext {
 	ID3D11DeviceContext* pDeviceContext;
 
 	ID3D11BlendState* pBSBlend;
+	ID3D11BlendState* pBSCopy;
 	ID3D11BlendState* pBSNoWrite;
 
 	ID3D11RasterizerState* pRSNoCull;
@@ -551,6 +553,13 @@ static int D3Dnvg__renderCreate(void* uptr)
 	blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
 	blendDesc.IndependentBlendEnable = FALSE;
 	hr = D3D_API_2(D3D->pDevice, CreateBlendState, &blendDesc, &D3D->pBSBlend);
+	if (FAILED(hr)) return 0;
+	// NVG_COPY is needed to expose a native video plane below a transparent UI.
+	// Source-over cannot erase an opaque background with a transparent fill.
+	blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_ZERO;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+	hr = D3D_API_2(D3D->pDevice, CreateBlendState, &blendDesc, &D3D->pBSCopy);
+	if (FAILED(hr)) return 0;
 
 
 	blendDesc.RenderTarget[0].BlendEnable = FALSE;
@@ -986,7 +995,7 @@ static void D3Dnvg__fill(struct D3DNVGcontext* D3D, struct D3DNVGcall* call)
 	// Draw anti-aliased pixels
 	D3D_API_1(D3D->pDeviceContext, RSSetState, D3D->pRSCull);
 	D3D_API_1(D3D->pDeviceContext, IASetPrimitiveTopology, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-	D3D_API_3(D3D->pDeviceContext, OMSetBlendState, D3D->pBSBlend, NULL, 0xFFFFFFFF);
+	D3D_API_3(D3D->pDeviceContext, OMSetBlendState, call->copy ? D3D->pBSCopy : D3D->pBSBlend, NULL, 0xFFFFFFFF);
 
 	D3Dnvg__setUniforms(D3D, call->uniformOffset + D3D->fragSize, call->image);
 
@@ -1049,7 +1058,7 @@ static void D3Dnvg__convexFillStencil(struct D3DNVGcontext* D3D, struct D3DNVGca
 
 	D3Dnvg__convexFill(D3D, call);
 
-	D3D_API_3(D3D->pDeviceContext, OMSetBlendState, D3D->pBSBlend, NULL, 0xFFFFFFFF);
+	D3D_API_3(D3D->pDeviceContext, OMSetBlendState, call->copy ? D3D->pBSCopy : D3D->pBSBlend, NULL, 0xFFFFFFFF);
 	D3D_API_2(D3D->pDeviceContext, OMSetDepthStencilState, D3D->pDepthStencilDrawAA, 0);
 }
 
@@ -1060,7 +1069,7 @@ static void D3Dnvg__convexFillStencilClear(struct D3DNVGcontext* D3D, struct D3D
 
 	D3Dnvg__convexFill(D3D, call);
 
-	D3D_API_3(D3D->pDeviceContext, OMSetBlendState, D3D->pBSBlend, NULL, 0xFFFFFFFF);
+	D3D_API_3(D3D->pDeviceContext, OMSetBlendState, call->copy ? D3D->pBSCopy : D3D->pBSBlend, NULL, 0xFFFFFFFF);
 	D3D_API_2(D3D->pDeviceContext, OMSetDepthStencilState, D3D->pDepthStencilDefault, 0);
 }
 
@@ -1147,12 +1156,12 @@ static void D3Dnvg__renderFlush(void* uptr)
 
 		 // Draw shapes
 		D3D_API_2(D3D->pDeviceContext, OMSetDepthStencilState, D3D->pDepthStencilDefault, 0);
-		D3D_API_3(D3D->pDeviceContext, OMSetBlendState, D3D->pBSBlend, NULL, 0xFFFFFFFF);
 
 		D3D_API_1(D3D->pDeviceContext, RSSetState, D3D->pRSCull);
 
 		for (i = 0; i < D3D->ncalls; i++) {
 			struct D3DNVGcall* call = &D3D->calls[i];
+			D3D_API_3(D3D->pDeviceContext, OMSetBlendState, call->copy ? D3D->pBSCopy : D3D->pBSBlend, NULL, 0xFFFFFFFF);
 
 			if (call->image != 0)
 			{
@@ -1289,7 +1298,7 @@ static void D3Dnvg__renderFill(void* uptr, struct NVGpaint* paint, NVGcompositeO
 	if (call->pathOffset == -1) goto error;
 	call->pathCount = npaths;
 	call->image = paint->image;
-	NVG_NOTUSED(compositeOperation);
+	call->copy = compositeOperation.srcRGB == NVG_ONE && compositeOperation.srcAlpha == NVG_ONE && compositeOperation.dstRGB == NVG_ZERO && compositeOperation.dstAlpha == NVG_ZERO;
 
 	if (npaths == 1 && paths[0].convex)
 	{
@@ -1372,7 +1381,7 @@ static void D3Dnvg__renderStroke(void* uptr, struct NVGpaint* paint, NVGcomposit
 	if (call->pathOffset == -1) goto error;
 	call->pathCount = npaths;
 	call->image = paint->image;
-	NVG_NOTUSED(compositeOperation);
+	call->copy = compositeOperation.srcRGB == NVG_ONE && compositeOperation.srcAlpha == NVG_ONE && compositeOperation.dstRGB == NVG_ZERO && compositeOperation.dstAlpha == NVG_ZERO;
 
 	// Allocate vertices for all the paths.
 	maxverts = D3Dnvg__maxVertCount(paths, npaths);
@@ -1425,7 +1434,7 @@ static void D3Dnvg__renderTriangles(void* uptr, struct NVGpaint* paint, NVGcompo
 
 	call->type = D3DNVG_TRIANGLES;
 	call->image = paint->image;
-	NVG_NOTUSED(compositeOperation);
+	call->copy = compositeOperation.srcRGB == NVG_ONE && compositeOperation.srcAlpha == NVG_ONE && compositeOperation.dstRGB == NVG_ZERO && compositeOperation.dstAlpha == NVG_ZERO;
 
 	// Allocate vertices for all the paths.
 	call->triangleOffset = D3Dnvg__allocVerts(D3D, nverts);
@@ -1482,6 +1491,7 @@ static void D3Dnvg__renderDelete(void* uptr)
 	D3D_API_RELEASE(D3D->pLayoutRenderTriangles);
 
 	D3D_API_RELEASE(D3D->pBSBlend);
+	D3D_API_RELEASE(D3D->pBSCopy);
 	D3D_API_RELEASE(D3D->pBSNoWrite);
 	D3D_API_RELEASE(D3D->pRSCull);
 	D3D_API_RELEASE(D3D->pRSNoCull);

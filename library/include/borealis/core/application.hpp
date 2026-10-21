@@ -218,6 +218,8 @@ class Application
      * @param fps 0 to disable limit
      */
     static void setLimitedFPS(size_t fps);
+    // Keep fractional media rates such as 24000/1001 instead of rounding to Hz.
+    static void setFrameRateLimit(double fps);
 
     /**
      * Set the swap interval
@@ -403,7 +405,7 @@ class Application
     inline static ActionIdentifier gloablQuitIdentifier = ACTION_NONE;
     inline static bool globalFPSToggleEnabled           = false;
     inline static size_t globalFPS                      = 60;
-    inline static Time limitedFrameTime                 = 0;
+    inline static double limitedFrameTime               = 0;
     inline static Time frameStartTime                   = 0;
     inline static bool hintsLiteMode                    = false;
 

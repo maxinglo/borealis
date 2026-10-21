@@ -59,6 +59,11 @@ namespace brls
 		InputManager* getInputManager() override;
 		ImeManager* getImeManager() override;
 		bool processEvent();
+	private:
+		void updateFocus();
+		bool windowActive = true, windowVisible = true, focused = true;
+		winrt::event_token activationToken{}, visibilityToken{}, backToken{};
+		winrt::Windows::UI::Core::SystemNavigationManager navigation{nullptr};
 	protected:
 		winrt::Windows::System::Display::DisplayRequest displayRequest=nullptr;
 		winrt::Windows::UI::Core::CoreWindow coreWindow=nullptr;
